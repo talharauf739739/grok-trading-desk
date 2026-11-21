@@ -49,6 +49,43 @@ A token is blocked if any of these is true:
 - Each trade is $100 from a $1,000 paper bankroll.
 - Exits: stop loss −25%, take profit +50%, or a time exit after 240 minutes.
 
+### Grok budget (stops by itself)
+
+Grok is the only part that can cost money, so it has three automatic stops:
+
+1. Grok is only called for tokens that already pass the free safety checks (RugCheck +
+   liquidity). Most new tokens fail those, so most tokens never reach Grok.
+2. A hard daily cap, `GROK_DAILY_CALL_LIMIT` (default 30 calls per UTC day). At the cap,
+   Grok stops until 00:00 UTC.
+3. If xAI answers "no credits" or rejects the key (HTTP 401/402/403), Grok pauses until the next
+   day. A rate limit (HTTP 429) pauses it for 15 minutes. It never retries in a loop.
+
+While Grok is paused, the desk keeps running on the free data and blocks tokens with the reason
+"Grok paused". The header shows calls used today. To make sure you are never billed, use prepaid
+xAI credits with auto top-up turned off: when the credits run out, Grok simply stops.
+
+## Free hosting on Streamlit Community Cloud
+
+The dashboard can run the agents in the same process (`EMBED_AGENTS=true`), so the whole desk
+runs as one free Streamlit app.
+
+1. Go to https://share.streamlit.io and sign in with GitHub.
+2. Click **Create app**, choose this repository, branch `master`, main file `dashboard.py`.
+3. Under **Advanced settings**, pick Python 3.12 and paste the secrets:
+   ```toml
+   EMBED_AGENTS = "true"
+   XAI_API_KEY = "your key"
+   GROK_DAILY_CALL_LIMIT = "30"
+   TELEGRAM_BOT_TOKEN = ""   # optional
+   TELEGRAM_CHAT_ID = ""     # optional
+   ```
+4. Deploy. The agents start when the first visitor opens the app.
+
+Things to know about the free tier: the app sleeps after 12 hours without visitors (agents
+stop, so no Grok calls either), and its disk is wiped on restart, so paper-trade history starts
+over after a reboot or redeploy. Visitors only read the dashboard; they cannot trigger Grok
+calls or see your keys.
+
 ## Setup
 
 Requires Python 3.10+.
@@ -71,7 +108,8 @@ Fill in `.env`:
 Optional tuning, also via `.env`: `SCAN_INTERVAL_S`, `MONITOR_INTERVAL_S`, `MAX_ANALYSES_PER_SCAN`,
 `MIN_LIQUIDITY_USD`, `MAX_TOP10_HOLDER_PCT`, `MIN_LP_LOCKED_PCT`, `MIN_GROK_CONFIDENCE`,
 `MAX_OPEN_POSITIONS`, `PAPER_BANKROLL_USD`, `PAPER_TRADE_SIZE_USD`, `PAPER_SLIPPAGE_PCT`,
-`STOP_LOSS_PCT`, `TAKE_PROFIT_PCT`, `MAX_HOLD_MINUTES`, `NOTIFY_BLOCKED`, `DESK_DB_PATH`.
+`STOP_LOSS_PCT`, `TAKE_PROFIT_PCT`, `MAX_HOLD_MINUTES`, `NOTIFY_BLOCKED`, `DESK_DB_PATH`,
+`GROK_DAILY_CALL_LIMIT`, `EMBED_AGENTS`, `BUILT_BY`.
 
 ## Run
 

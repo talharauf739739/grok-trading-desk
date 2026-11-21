@@ -11,4 +11,6 @@ def http_client(timeout: float = 20) -> httpx.Client:
 
 
 class SourceError(Exception):
-    pass
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status

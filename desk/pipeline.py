@@ -11,6 +11,7 @@ import threading
 
 from .agents import (AnalyzerAgent, NotifierAgent, PaperExecutor, PositionMonitor, RiskAgent,
                      ScannerAgent)
+from .budget import GrokBudget
 from .config import Config
 from .db import DB
 from .sources import SourceError
@@ -34,8 +35,9 @@ class Desk:
                 grok = Grok(config.xai_api_key, config.xai_model)
             except SourceError as exc:
                 self.db.log("analyzer", "disabled", f"Grok unavailable: {exc}; every token will be blocked")
+        self.budget = GrokBudget(self.db, config.grok_daily_call_limit)
         self.scanner = ScannerAgent(self.db, config, dex)
-        self.analyzer = AnalyzerAgent(self.db, config, rugcheck or RugCheck(), grok)
+        self.analyzer = AnalyzerAgent(self.db, config, rugcheck or RugCheck(), grok, self.budget)
         self.risk = RiskAgent(self.db, config)
         self.executor = PaperExecutor(self.db, config, dex)
         self.notifier = NotifierAgent(
@@ -43,6 +45,7 @@ class Desk:
             telegram or Telegram(config.telegram_bot_token, config.telegram_chat_id))
         self.monitor = PositionMonitor(self.db, config, dex)
         self._stop = threading.Event()
+        self._threads: list[threading.Thread] = []
 
     def scan_once(self) -> dict:
         summary = {"candidates": 0, "approved": 0, "opened": 0}
@@ -80,22 +83,39 @@ class Desk:
                 log.exception("%s loop error", name)
             self._stop.wait(interval)
 
-    def run_forever(self) -> None:
+    @property
+    def running(self) -> bool:
+        return any(t.is_alive() for t in self._threads)
+
+    def start_background(self) -> None:
+        """Start the scanner and monitor loops in daemon threads and return."""
+        if self.running:
+            return
+        self._stop.clear()
+        if not self.db.equity_curve(1):
+            self.db.record_equity(self.config.paper_bankroll_usd)
         self.db.log("desk", "start",
                     f"desk started (paper only): scan every {self.config.scan_interval_s:g}s, "
-                    f"monitor every {self.config.monitor_interval_s:g}s")
-        threads = [
+                    f"monitor every {self.config.monitor_interval_s:g}s, "
+                    f"Grok limit {self.config.grok_daily_call_limit}/day")
+        self._threads = [
             threading.Thread(target=self._every, name="monitor", daemon=True,
                              args=(self.config.monitor_interval_s, self.monitor_once, "monitor")),
             threading.Thread(target=self._every, name="scan", daemon=True,
                              args=(self.config.scan_interval_s, self.scan_once, "scan")),
         ]
-        for t in threads:
+        for t in self._threads:
             t.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def run_forever(self) -> None:
+        self.start_background()
         try:
-            while any(t.is_alive() for t in threads):
-                for t in threads:
+            while self.running:
+                for t in self._threads:
                     t.join(timeout=1)
         except KeyboardInterrupt:
-            self._stop.set()
+            self.stop()
             self.db.log("desk", "stop", "desk stopped")

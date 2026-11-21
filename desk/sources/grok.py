@@ -75,8 +75,11 @@ class Grok:
         self.model = model
         self._api_key = api_key
         self.http = client or http_client(timeout=90)
+        self.before_request = None  # optional callable, run before every billable request
 
     def _post(self, payload: dict) -> httpx.Response:
+        if self.before_request:
+            self.before_request()
         try:
             return self.http.post(f"{BASE_URL}/chat/completions", json=payload,
                                   headers={"Authorization": f"Bearer {self._api_key}"})
@@ -100,7 +103,8 @@ class Grok:
             payload["response_format"] = {"type": "json_object"}
             resp = self._post(payload)
         if resp.status_code >= 400:
-            raise SourceError(f"grok HTTP {resp.status_code}: {resp.text[:200]}")
+            raise SourceError(f"grok HTTP {resp.status_code}: {resp.text[:200]}",
+                              status=resp.status_code)
         try:
             content = resp.json()["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, ValueError) as exc:

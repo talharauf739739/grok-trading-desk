@@ -64,6 +64,23 @@ CREATE TABLE IF NOT EXISTS trades (
     pnl_pct         REAL,
     grok_summary    TEXT
 );
+
+CREATE TABLE IF NOT EXISTS price_ticks (
+    trade_id  INTEGER NOT NULL,
+    ts        TEXT NOT NULL,
+    price_usd REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS price_ticks_trade ON price_ticks(trade_id, ts);
+
+CREATE TABLE IF NOT EXISTS equity (
+    ts         TEXT NOT NULL,
+    equity_usd REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS kv (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -180,9 +197,77 @@ class DB:
                              (token_address,)).fetchone() is not None
 
     def mark_price(self, trade_id: int, price_usd: float) -> None:
+        ts = now_iso()
         with self.conn() as c:
             c.execute("UPDATE trades SET last_price_usd = ?, last_checked_at = ? WHERE id = ?",
-                      (price_usd, now_iso(), trade_id))
+                      (price_usd, ts, trade_id))
+            c.execute("INSERT INTO price_ticks(trade_id, ts, price_usd) VALUES (?, ?, ?)",
+                      (trade_id, ts, price_usd))
+
+    def price_ticks(self, trade_id: int, limit: int = 240) -> list[float]:
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT price_usd FROM (SELECT rowid, price_usd FROM price_ticks WHERE trade_id = ? "
+                "ORDER BY rowid DESC LIMIT ?) ORDER BY rowid", (trade_id, limit)).fetchall()
+        return [r["price_usd"] for r in rows]
+
+    # -- equity curve (derived from real prices and paper records) --------------
+    def record_equity(self, bankroll_usd: float) -> None:
+        equity = self.account(bankroll_usd)["equity_usd"]
+        with self.conn() as c:
+            c.execute("INSERT INTO equity(ts, equity_usd) VALUES (?, ?)", (now_iso(), equity))
+
+    def equity_curve(self, limit: int = 2000) -> list[dict]:
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT ts, equity_usd FROM (SELECT rowid, * FROM equity ORDER BY rowid DESC LIMIT ?) "
+                "ORDER BY rowid", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    # -- key/value (budget counters) --------------------------------------------
+    def get_kv(self, key: str) -> str | None:
+        with self.conn() as c:
+            row = c.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_kv(self, key: str, value) -> None:
+        with self.conn() as c:
+            c.execute("INSERT INTO kv(key, value) VALUES (?, ?) "
+                      "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, str(value)))
+
+    def incr_kv(self, key: str) -> int:
+        with self.conn() as c:
+            c.execute("INSERT INTO kv(key, value) VALUES (?, '1') "
+                      "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1", (key,))
+            return int(c.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()["value"])
+
+    # -- activity counters for the dashboard -------------------------------------
+    def counts_since(self, since_iso: str) -> dict:
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT agent, event, COUNT(*) n FROM agent_log WHERE ts >= ? GROUP BY agent, event",
+                (since_iso,)).fetchall()
+        return {f"{r['agent']}.{r['event']}": r["n"] for r in rows}
+
+    def last_event_by_agent(self) -> dict:
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT a.* FROM agent_log a JOIN (SELECT agent, MAX(id) id FROM agent_log GROUP BY agent) m "
+                "ON a.id = m.id").fetchall()
+        return {r["agent"]: dict(r) for r in rows}
+
+    def latest_decision_token(self) -> dict | None:
+        with self.conn() as c:
+            row = c.execute(
+                "SELECT * FROM tokens WHERE status IN ('blocked', 'approved', 'traded') "
+                "ORDER BY updated_at DESC LIMIT 1").fetchone()
+        return dict(row) if row else None
+
+    def token_events(self, token_address: str) -> list[dict]:
+        with self.conn() as c:
+            rows = c.execute("SELECT * FROM agent_log WHERE token_address = ? ORDER BY id",
+                             (token_address,)).fetchall()
+        return [dict(r) for r in rows]
 
     def close_trade(self, trade_id: int, *, exit_quote_usd: float, exit_price_usd: float,
                     reason: str) -> dict:

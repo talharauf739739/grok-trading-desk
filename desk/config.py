@@ -55,6 +55,13 @@ class Config:
 
     notify_blocked: bool = False
 
+    # Grok budget: hard daily cap on calls; the desk pauses Grok when it is reached
+    grok_daily_call_limit: int = 30
+
+    # run the agents inside the Streamlit process (for Streamlit Community Cloud)
+    embed_agents: bool = False
+    built_by: str = "@ai_talha_agents"
+
     @property
     def telegram_enabled(self) -> bool:
         return bool(self.telegram_bot_token and self.telegram_chat_id)
@@ -83,5 +90,12 @@ def load_config() -> Config:
         stop_loss_pct=_num("STOP_LOSS_PCT", 25),
         take_profit_pct=_num("TAKE_PROFIT_PCT", 50),
         max_hold_minutes=_num("MAX_HOLD_MINUTES", 240),
-        notify_blocked=_str("NOTIFY_BLOCKED", "false").lower() in ("1", "true", "yes"),
+        notify_blocked=_bool("NOTIFY_BLOCKED"),
+        grok_daily_call_limit=int(_num("GROK_DAILY_CALL_LIMIT", 30)),
+        embed_agents=_bool("EMBED_AGENTS"),
+        built_by=_str("BUILT_BY", "@ai_talha_agents"),
     )
+
+
+def _bool(name: str) -> bool:
+    return (_str(name, "false") or "").lower() in ("1", "true", "yes")

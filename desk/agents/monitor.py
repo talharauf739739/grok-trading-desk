@@ -53,4 +53,5 @@ class PositionMonitor(Agent):
                          f"P&L ${trade['pnl_usd']:+,.2f} ({trade['pnl_pct']:+.1f}%)",
                          token=t["token_address"], symbol=t["symbol"], data=trade)
                 closed.append(trade)
+        self.db.record_equity(cfg.paper_bankroll_usd)
         return closed

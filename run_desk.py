@@ -24,10 +24,6 @@ def main() -> None:
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
-    # httpx logs full request URLs at INFO; the Telegram URL contains the bot token.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-
     config = load_config()
     print(f"Grok trading desk: PAPER TRADING ONLY · model {config.xai_model} · db {config.db_path}")
     desk = Desk(config)

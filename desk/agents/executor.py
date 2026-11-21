@@ -52,6 +52,8 @@ class PaperExecutor(Agent):
             grok_summary=a.grok["summary"] if a.grok else None,
         )
         self.db.upsert_token(c.token_address, status="traded")
+        self.db.mark_price(trade_id, quote)  # first point of the position's price history
+        self.db.record_equity(cfg.paper_bankroll_usd)
         trade = self.db.get_trade(trade_id)
         self.log("paper_open",
                  f"PAPER BUY ${size:,.2f} of {c.symbol} at ${entry:.10g} "
